@@ -2,7 +2,6 @@ package flac
 
 import (
 	"errors"
-	"reflect"
 	"unsafe"
 )
 
@@ -10,45 +9,53 @@ import (
 #cgo pkg-config: flac
 #include <FLAC/stream_decoder.h>
 
-typedef struct {
-  int failed;
-  int length;
-  int16_t* L;
-  int16_t* R;
-} UserData;
-
-extern void LoadFlacFromFile(char*, UserData*);
+extern void LoadFlacFromFile(char*, void*);
 */
 import "C"
 
-// ----------------------------------------------------------------------------
-func cArrayToSlice16(cArray *C.int16_t, length int) []int16 {
-	var goSlice []int16
-	sliceHeader := (*reflect.SliceHeader)((unsafe.Pointer(&goSlice)))
-	sliceHeader.Cap = length
-	sliceHeader.Len = length
-	sliceHeader.Data = uintptr(unsafe.Pointer(cArray))
-	return goSlice
+type flacLoader struct {
+	ok bool 
+	L []int16
+	R []int16
 }
 
-// ----------------------------------------------------------------------------
-// Load the stero flac file.
-// Returns the left and right channels as int16 slices.
-// Currently only loads stereo, 16-bit, 48 kHz flac files.
+//export createArrays
+func createArrays(ptr unsafe.Pointer, cLength C.int) {
+	length := int(cLength)
+	loader := (*flacLoader)(ptr)
+	loader.L = make([]int16, length)
+	loader.R = make([]int16, length)
+}
+
+//export getL
+func getL(ptr unsafe.Pointer) unsafe.Pointer {
+	loader := (*flacLoader)(ptr)
+	return unsafe.Pointer(&loader.L[0])
+}
+
+//export getR
+func getR(ptr unsafe.Pointer) unsafe.Pointer {
+	loader := (*flacLoader)(ptr)
+	return unsafe.Pointer(&loader.R[0])
+}
+
+//export setFailed
+func setFailed(ptr unsafe.Pointer) {
+	(*flacLoader)(ptr).ok = false
+}
+
 func LoadInt16(path string) ([]int16, []int16, error) {
-	var data C.UserData
-	C.LoadFlacFromFile(C.CString(path), &data)
+	loader := new(flacLoader)
+	loader.ok = true
+	
+	C.LoadFlacFromFile(C.CString(path), unsafe.Pointer(loader))
 
-	if data.failed != 0 {
-		return nil, nil, errors.New("Failed to load file: " + path)
+	if !loader.ok {
+		return nil, nil, errors.New("Failed to load flac file.")
 	}
-
-	l := int(data.length)
-	return cArrayToSlice16(data.L, l), cArrayToSlice16(data.R, l), nil
+	return loader.L, loader.R, nil
 }
 
-// ----------------------------------------------------------------------------
-// Like LoadInt16, but returns float32 slices.
 func LoadFloat32(path string) ([]float32, []float32, error) {
 	L1, R1, err := LoadInt16(path)
 	if err != nil {
